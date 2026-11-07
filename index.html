@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BMUN SECURE COMMLINK</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background-color: #050505;
+            color: #00ff00;
+            font-family: 'Share Tech Mono', monospace;
+            margin: 0;
+            overflow: hidden;
+        }
+
+        /* Scanline effect overlay */
+        .scanlines {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: linear-gradient(
+                to bottom,
+                rgba(255, 255, 255, 0),
+                rgba(255, 255, 255, 0) 50%,
+                rgba(0, 0, 0, 0.2) 50%,
+                rgba(0, 0, 0, 0.2)
+            );
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 50;
+            opacity: 0.6;
+        }
+
+        /* Subtle screen flicker */
+        @keyframes flicker {
+            0% { opacity: 0.95; }
+            5% { opacity: 0.85; }
+            10% { opacity: 0.95; }
+            15% { opacity: 1; }
+            100% { opacity: 1; }
+        }
+
+        .screen-container {
+            animation: flicker 4s infinite;
+            text-shadow: 0 0 5px rgba(0, 255, 0, 0.5);
+        }
+
+        /* Custom scrollbar for terminal vibe */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #000;
+            border-left: 1px solid #00ff00;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #00ff00;
+        }
+
+        .sys-msg { color: #ff3333; text-shadow: 0 0 5px rgba(255, 51, 51, 0.7); }
+        .del-msg { color: #00ff00; }
+        
+        .input-glow:focus {
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.3) inset;
+        }
+    </style>
+</head>
+<body class="h-screen w-screen flex flex-col items-center justify-center p-4 sm:p-8">
+
+    <div class="scanlines"></div>
+
+    <!-- HIDDEN ADMIN TRIGGER -->
+    <!-- Clicking this top-right corner 3 times triggers AI mode -->
+    <div id="admin-trigger" class="absolute top-0 right-0 w-16 h-16 z-50 cursor-default" title=""></div>
+
+    <div class="screen-container w-full max-w-4xl h-full flex flex-col border-2 border-green-500 bg-black/80 relative z-10 p-1">
+        
+        <!-- Terminal Header -->
+        <div class="border-b-2 border-green-500 p-3 flex justify-between items-center bg-green-900/20">
+            <h1 id="terminal-header" class="text-xl sm:text-2xl font-bold tracking-widest uppercase">
+                SECURE COMMLINK V2.4 // BMUN
+            </h1>
+            <div class="text-xs sm:text-sm animate-pulse" id="status-indicator">
+                [CONNECTION: SECURE]
+            </div>
+        </div>
+
+        <!-- Chat Output Area -->
+        <div id="chat-box" class="flex-grow overflow-y-auto p-4 flex flex-col gap-2">
+            <div class="text-green-700 mb-4 opacity-70">
+                > Initializing secure connection...<br>
+                > Encrypting channel... [OK]<br>
+                > Awaiting communications...
+            </div>
+            <!-- Messages will be injected here -->
+        </div>
+
+        <!-- Input Area -->
+        <div class="border-t-2 border-green-500 p-2 flex items-center bg-black">
+            <span id="prompt-prefix" class="mr-2 font-bold">[DELEGATE] $</span>
+            <input type="text" id="chat-input" 
+                class="flex-grow bg-transparent border-none outline-none text-green-500 font-mono text-lg input-glow placeholder-green-800" 
+                placeholder="Type transmission..." 
+                autocomplete="off">
+        </div>
+    </div>
+
+    <!-- Zero-Config HTTP Pub/Sub Setup (Bypasses WebSocket restrictions) -->
+    <script>
+        // Application State
+        let isAiMode = false;
+        // Generate a random 4 digit delegate ID
+        let username = "DEL-" + Math.floor(1000 + Math.random() * 9000); 
+        let adminClicks = 0;
+
+        // The secure channel all users will communicate on. 
+        const COMM_CHANNEL = "bmun-crisis-channel-omega-99"; 
+        const ntfyUrl = `https://ntfy.sh/${COMM_CHANNEL}`;
+
+        // UI Elements
+        const chatBox = document.getElementById('chat-box');
+        const chatInput = document.getElementById('chat-input');
+        const adminTrigger = document.getElementById('admin-trigger');
+        const terminalHeader = document.getElementById('terminal-header');
+        const promptPrefix = document.getElementById('prompt-prefix');
+        const statusIndicator = document.getElementById('status-indicator');
+
+        // Helper to format timestamps
+        function formatTime(ms) {
+            const d = new Date(ms);
+            return d.toISOString().split('T')[1].substring(0, 8); // Returns HH:MM:SS
+        }
+
+        // Render a message to the DOM
+        function appendMessage(text, sender, isAI, timestamp = Date.now()) {
+            const div = document.createElement('div');
+            const timeStr = formatTime(timestamp);
+            div.className = isAI ? "sys-msg font-bold break-words" : "del-msg break-words";
+            // Use textContent to prevent XSS (Cross-Site Scripting) attacks from raw HTML input
+            div.textContent = `[${timeStr}] <${sender}> ${text}`;
+            chatBox.appendChild(div);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        // 1. Secret Admin Trigger Logic
+        adminTrigger.addEventListener('click', () => {
+            adminClicks++;
+            if (adminClicks === 3) {
+                isAiMode = true;
+                username = "SYSTEM_AI";
+                
+                // Visual feedback for admin mode
+                terminalHeader.innerText = "SYS_OVERRIDE_ACTIVE // CRISIS CTRL";
+                terminalHeader.style.color = '#ff3333';
+                
+                promptPrefix.innerText = "[SYS_AI] $";
+                promptPrefix.style.color = '#ff3333';
+                
+                statusIndicator.innerText = "[CRISIS MODE ENABLED]";
+                statusIndicator.style.color = '#ff3333';
+                
+                chatInput.style.color = '#ff3333';
+                chatInput.classList.replace('placeholder-green-800', 'placeholder-red-900');
+                
+                appendMessage("SYSTEM OVERRIDE ACCEPTED. AI DIRECTIVES UNLOCKED.", "SYSTEM", true);
+            }
+        });
+
+        // 2. Connect to Public Live HTTP Broker using Server-Sent Events (SSE)
+        appendMessage("CONNECTING TO GLOBAL HTTP RELAY...", "SYSTEM", true);
+        
+        const eventSource = new EventSource(`${ntfyUrl}/sse`);
+
+        eventSource.onopen = () => {
+            appendMessage("UPLINK ESTABLISHED. LIVE CHANNEL OPEN.", "SYSTEM", true);
+            statusIndicator.innerText = "[LIVE: SECURE]";
+        };
+
+        eventSource.onerror = (err) => {
+            console.error("Connection Error:", err);
+            statusIndicator.innerText = "[INTERFERENCE DETECTED]";
+        };
+
+        // 3. Handle incoming live messages
+        eventSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                // ntfy sends various connection events, we only care about user messages
+                if (data.event === 'message') {
+                    const payload = JSON.parse(data.message);
+                    appendMessage(payload.text, payload.sender, payload.isAI, payload.timestamp);
+                }
+            } catch (e) {
+                console.error("Garbled transmission", e);
+            }
+        };
+
+        // 4. Handle outgoing messages (Standard HTTP POST)
+        chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && chatInput.value.trim() !== '') {
+                const text = chatInput.value.trim();
+                chatInput.value = ''; // clear input
+                
+                const payload = JSON.stringify({
+                    text: text,
+                    sender: username,
+                    isAI: isAiMode,
+                    timestamp: Date.now()
+                });
+
+                // Publish to the live channel via HTTP POST
+                fetch(ntfyUrl, {
+                    method: 'POST',
+                    body: payload
+                }).catch(err => {
+                    appendMessage("ERR: TRANSMISSION FAILED.", "SYSTEM", true);
+                });
+            }
+        });
+
+        // Keep focus on input for fast typing, but allow text selection
+        chatInput.focus();
+        document.body.addEventListener('click', () => {
+            if (window.getSelection().toString() === '') {
+                chatInput.focus();
+            }
+        });
+
+    </script>
+</body>
+</html>
